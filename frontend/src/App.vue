@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Location, MapLocation, Tickets, Van } from '@element-plus/icons-vue';
+import { Bell, Location, MapLocation, Tickets, Van } from '@element-plus/icons-vue';
 import { useUiStore } from './stores/uiStore';
+import { usePortStore } from './stores/portStore';
 
 const route = useRoute();
 const uiStore = useUiStore();
+const portStore = usePortStore();
 
 const activePath = computed(() => {
   const path = route.path;
   if (path === '/' || path.startsWith('/ports')) return '/';
   if (path.startsWith('/vessels')) return '/vessels';
   if (path.startsWith('/calls')) return '/calls';
+  if (path.startsWith('/reviews')) return '/reviews';
   if (path.startsWith('/map')) return '/map';
   return path;
 });
@@ -25,6 +28,10 @@ watch(
     }
   },
 );
+
+onMounted(() => {
+  void portStore.loadAll();
+});
 </script>
 
 <template>
@@ -49,6 +56,16 @@ watch(
         <el-menu-item index="/calls">
           <el-icon><Tickets /></el-icon>
           进出港登记
+        </el-menu-item>
+        <el-menu-item index="/reviews">
+          <el-icon><Bell /></el-icon>
+          核验待办
+          <el-badge
+            v-if="portStore.pendingReviewCount"
+            :value="portStore.pendingReviewCount"
+            class="review-badge"
+            data-testid="review-badge"
+          />
         </el-menu-item>
         <el-menu-item index="/map">
           <el-icon><MapLocation /></el-icon>
@@ -106,6 +123,9 @@ watch(
 }
 .app__menu {
   border-bottom: none;
+}
+.review-badge {
+  margin-left: 8px;
 }
 .app__main {
   padding: 20px 24px 8px;

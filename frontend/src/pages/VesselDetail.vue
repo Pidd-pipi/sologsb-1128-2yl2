@@ -94,6 +94,7 @@ watch(vesselId, bootstrap);
               <el-descriptions-item label="总吨位">
                 {{ formatNumber(vessel.grossTonnage) }} t（{{ tonnageTier(vessel.grossTonnage) }}）
               </el-descriptions-item>
+              <el-descriptions-item label="吃水">{{ formatNumber(vessel.draftDepth) }} m</el-descriptions-item>
               <el-descriptions-item label="主机功率">
                 {{ formatNumber(vessel.enginePower, 0) }} kW（{{ powerTier(vessel.enginePower) }}）
               </el-descriptions-item>

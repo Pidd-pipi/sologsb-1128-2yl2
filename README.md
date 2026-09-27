@@ -1,7 +1,7 @@
 # 渔港与渔船档案地图（sologsb-1128 / gbfishport）
 
 面向渔港管理站、渔业合作社与船东的**纯前端单页应用**：把渔港泊位条件、渔船技术档案与进出港动态集中到一张图上核对。
-支持登记泊位与补给能力、建立含主机功率与吨位的渔船档案、记录进出港与泊位占用。
+支持登记泊位与补给能力、建立含主机功率、吨位和吃水的渔船档案；进出港提交时核验证书、吃水、重号船与泊位条件，异常申请进入待办，处理人确认后才形成正常流水。
 
 ## 一键启动（Docker Compose）
 
@@ -42,12 +42,12 @@ sologsb-1128/
 │   ├── nginx.conf              # try_files $uri $uri/ /index.html + gzip
 │   ├── public/favicon.svg
 │   └── src/
-│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts（4 个数据模型）
+│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts / review.ts（5 个数据模型）
 │       ├── stores/             # portStore.ts / vesselStore.ts / uiStore.ts
 │       ├── db/                 # index.ts（Dexie v1→v3 迁移）/ berth.ts / seed.ts
 │       ├── components/common/  # PortCard / BerthGrid / VesselSpecTable / MapPanel / EmptyState
 │       ├── hooks/              # useAmapLoader / useBerthStatus / useLocalDraft
-│       ├── pages/              # PortList / PortDetail / VesselList / VesselDetail / CallBoard / MapView
+│       ├── pages/              # PortList / PortDetail / VesselList / VesselDetail / CallBoard / ReviewBoard / MapView
 │       ├── router/index.ts
 │       └── utils/              # tonnage.ts / geo.ts / format.ts
 └── README.md
@@ -60,8 +60,9 @@ sologsb-1128/
 | `/` | 渔港一览：卡片展示等级、泊位数、在港船数与占用率，支持按等级与避风能力筛选 | FishingPort、Berth、PortCall |
 | `/ports/:id` | 渔港详情：基本信息与补给能力、SVG 泊位网格（点击查看占用船舶）、在港船舶与近日流水 | 四个模型 |
 | `/vessels` | 渔船检索：按作业类型、主机功率区间、总吨位与船籍港组合查询 | FishingVessel |
-| `/vessels/:id` | 渔船档案详情：主尺度、主机功率、作业类型、证书有效期与进出港时间线 | FishingVessel、PortCall |
-| `/calls` | 进出港登记：选择渔船与类型，填写泊位号、加冰量、加油量、卸货量并同步泊位状态 | PortCall、Berth、FishingVessel |
+| `/vessels/:id` | 渔船档案详情：主尺度（含吃水）、主机功率、作业类型、证书有效期与进出港时间线 | FishingVessel、PortCall |
+| `/calls` | 进出港登记：提交时核验证书、吃水、重号船与泊位状态，未通过则转入待办；通过才同步泊位状态 | PortCall、Berth、FishingVessel、CallReviewTask |
+| `/reviews` | 核验待办：查看拦截原因和涉及渔港，处理人确认放行后形成正常流水，也可驳回归档 | CallReviewTask、PortCall、Berth、FishingVessel |
 | `/map` | 渔港与在港渔船分布：高德 JS API 标记，未配置 key 时为 SVG 网格视图，点选弹出泊位占用摘要 | FishingPort、Berth |
 
 ## 数据存储说明
@@ -70,8 +71,10 @@ sologsb-1128/
   - `v1`：建 `ports`、`vessels` 表
   - `v2`：新增 `calls` 表与 `vesselId` 索引
   - `v3`：新增 `berths` 表，并按每个渔港登记的泊位数生成初始泊位记录
-- **表单草稿走 localStorage**（键前缀 `gbfishport:draft:`），例如进出港登记草稿 `gbfishport:draft:call-board`，提交成功后自动清空。
-- 首次打开会自动写入一组演示数据（4 座渔港、6 艘渔船、8 条进出港流水与对应泊位），便于直接查看各页面效果。
+  - `v4`：渔船增加吃水，流水补充渔港索引，新增 `reviews` 核验待办表；历史渔船补默认吃水，原有流水继续保留
+- **核验规则**：证书按申请时间校验有效期；进港必须选择空闲泊位、出港必须匹配本船占用泊位；渔船吃水不得超过泊位设计水深；同一渔船编号被其他档案占用时标记重号。未通过的申请只写入 `reviews`，不写入 `calls`、不改变泊位；处理人在 `/reviews` 确认放行后才生成正常流水，驳回复保留处理记录。
+- **表单草稿走 localStorage**（键前缀 `gbfishport:draft:`），例如进出港登记草稿 `gbfishport:draft:call-board`，提交成功或进入待办后自动清空。
+- 首次打开会自动写入一组演示数据（4 座渔港、6 艘含吃水的渔船、8 条进出港流水、1 条核验待办与对应泊位），便于直接查看各页面效果。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器站点数据即可重置。
 
 ## 高德地图 Key（可选）

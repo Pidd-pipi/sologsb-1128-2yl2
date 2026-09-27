@@ -9,7 +9,11 @@ import { useBerthStatus } from '../hooks/useBerthStatus';
 import BerthGrid from '../components/common/BerthGrid.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import type { Berth } from '../types/berth';
+import type { FishingPort } from '../types/port';
+import type { FishingVessel } from '../types/vessel';
+import type { ReviewIssue } from '../types/review';
 import { CALL_TYPES, VISA_STATUSES, emptyCallDraft, type CallDraft, type CallType } from '../types/call';
+import { validateCallRegistration } from '../utils/callValidation';
 import { formatDateTime, formatNumber, isToday, nowLocalInputValue, toPlain } from '../utils/format';
 
 interface CallForm extends CallDraft {
@@ -40,6 +44,37 @@ const rules: FormRules = {
 const vesselOptions = computed(() => vesselStore.vessels);
 
 const selectedVessel = computed(() => vesselStore.vesselById(form.value.vesselId));
+const selectedPort = computed<FishingPort | undefined>(() => portStore.portById(form.value.portId));
+const selectedBerth = computed<Berth | undefined>(() =>
+  form.value.portId && form.value.berthNo
+    ? portStore.berths.find((b) => b.portId === form.value.portId && b.berthNo === form.value.berthNo)
+    : undefined,
+);
+
+const preCheckReady = computed(() => Boolean(selectedVessel.value && selectedPort.value && form.value.berthNo));
+
+const preCheck = computed<{ issues: ReviewIssue[]; valid: boolean }>(() => {
+  if (!preCheckReady.value || !selectedVessel.value || !selectedPort.value) {
+    return { issues: [], valid: true };
+  }
+  return validateCallRegistration({
+    draft: {
+      vesselId: form.value.vesselId,
+      type: form.value.type,
+      time: form.value.time,
+      berthNo: form.value.berthNo,
+      portId: form.value.portId,
+      iceKg: Number(form.value.iceKg) || 0,
+      fuelL: Number(form.value.fuelL) || 0,
+      unloadKg: Number(form.value.unloadKg) || 0,
+      visaStatus: form.value.visaStatus,
+    },
+    vessel: selectedVessel.value as FishingVessel,
+    vessels: vesselStore.vessels,
+    port: selectedPort.value,
+    berth: selectedBerth.value,
+  });
+});
 
 /** 进港只能选空闲泊位；出港只能选已占用泊位 */
 const berthOptions = computed(() => {
@@ -143,13 +178,18 @@ async function submit(): Promise<void> {
       type: form.value.type,
       time: form.value.time,
       berthNo: form.value.berthNo,
+      portId: form.value.portId,
       iceKg: Number(form.value.iceKg) || 0,
       fuelL: Number(form.value.fuelL) || 0,
       unloadKg: Number(form.value.unloadKg) || 0,
       visaStatus: form.value.visaStatus,
     };
-    const call = await portStore.registerCall(payload, selectedVessel.value.name, form.value.portId);
-    ElMessage.success(`已登记 ${call.vesselName} ${call.type} · 泊位 ${call.berthNo}`);
+    const result = await portStore.submitCallRegistration(payload, selectedVessel.value, vesselStore.vessels);
+    if (result.outcome === 'review') {
+      ElMessage.warning(`已拦截并进入核验待办：${result.review.reasons.join('；')}`);
+    } else {
+      ElMessage.success(`已登记 ${result.call.vesselName} ${result.call.type} · 泊位 ${result.call.berthNo}`);
+    }
     clearDraft();
     Object.assign(form.value, {
       ...emptyCallDraft(),
@@ -175,7 +215,7 @@ function openVessel(vesselId: string): void {
       <div>
         <h1>进出港登记</h1>
         <p class="page__sub">
-          选择渔船与进出港类型，填写泊位号、加冰量、加油量与卸货量，提交后自动同步泊位占用状态
+          提交时自动核对证书有效期、渔船吃水、重号船与泊位条件；有问题的申请只进入待办，处理人确认后才形成正常流水。
         </p>
       </div>
     </header>
@@ -204,11 +244,34 @@ function openVessel(vesselId: string): void {
                 <el-option
                   v-for="v in vesselOptions"
                   :key="v.id"
-                  :label="`${v.name}（${v.homePort} · ${formatNumber(v.enginePower, 0)}kW）`"
+                  :label="`${v.name}（${v.homePort} · 吃水 ${formatNumber(v.draftDepth)}m）`"
                   :value="v.id"
                 />
               </el-select>
             </el-form-item>
+
+            <el-alert
+              v-if="selectedVessel"
+              :type="preCheckReady ? (preCheck.valid ? 'success' : 'warning') : 'info'"
+              :closable="false"
+              show-icon
+              class="check-alert"
+              data-testid="call-precheck"
+            >
+              <template #title>
+                {{ selectedVessel.name }} 吃水 {{ formatNumber(selectedVessel.draftDepth) }}m
+                <template v-if="selectedBerth">
+                  · 泊位水深 {{ formatNumber(selectedBerth.designDepth) }}m
+                </template>
+              </template>
+              <template #default>
+                <template v-if="!preCheckReady">选择泊位后自动核对证书、吃水、重号船与泊位条件。</template>
+                <template v-else-if="preCheck.valid">当前信息通过预检；提交后将直接形成正常流水并同步泊位。</template>
+                <ul v-else class="check-alert__list">
+                  <li v-for="issue in preCheck.issues" :key="issue.code">{{ issue.message }}</li>
+                </ul>
+              </template>
+            </el-alert>
 
             <el-form-item label="进出港类型" prop="type">
               <el-radio-group v-model="form.type" data-testid="call-type">
@@ -312,6 +375,9 @@ function openVessel(vesselId: string): void {
           <template #default="scope">{{ formatDateTime(scope.row.time) }}</template>
         </el-table-column>
         <el-table-column prop="berthNo" label="泊位号" width="90" />
+        <el-table-column label="渔港" min-width="120">
+          <template #default="scope">{{ scope.row.portId ? portStore.portById(scope.row.portId)?.name ?? '—' : '—' }}</template>
+        </el-table-column>
         <el-table-column label="加冰 kg" min-width="100">
           <template #default="scope">{{ formatNumber(scope.row.iceKg, 0) }}</template>
         </el-table-column>
@@ -353,6 +419,13 @@ function openVessel(vesselId: string): void {
 }
 .draft-alert {
   border-radius: 10px;
+}
+.check-alert {
+  margin-bottom: 18px;
+}
+.check-alert__list {
+  margin: 6px 0 0;
+  padding-left: 18px;
 }
 .stat-row {
   display: flex;

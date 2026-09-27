@@ -38,7 +38,9 @@ const addBerthForm = reactive({ berthNo: '', designDepth: 4.5 });
 
 const recentCalls = computed(() => {
   const numbers = new Set(portBerths.value.map((b) => b.berthNo));
-  return portStore.callsSorted.filter((c) => numbers.has(c.berthNo)).slice(0, 8);
+  return portStore.callsSorted
+    .filter((c) => (c.portId ? c.portId === portId.value : numbers.has(c.berthNo)))
+    .slice(0, 8);
 });
 
 const supply = computed(() => (port.value ? supplyText(port.value.supply) : '—'));

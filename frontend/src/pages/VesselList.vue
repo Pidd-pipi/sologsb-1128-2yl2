@@ -22,6 +22,7 @@ function emptyForm(): VesselInput {
     homePort: '',
     length: 24,
     beam: 5,
+    draftDepth: 3.2,
     grossTonnage: 80,
     enginePower: 160,
     operationType: '拖网',
@@ -46,6 +47,7 @@ const rules: FormRules = {
     },
   ],
   homePort: [{ required: true, message: '请输入船籍港', trigger: 'blur' }],
+  draftDepth: [{ required: true, message: '请登记渔船吃水', trigger: 'change' }],
   owner: [{ required: true, message: '请输入船主', trigger: 'blur' }],
   certificateExpiry: [{ required: true, message: '请选择证书有效期', trigger: 'change' }],
 };
@@ -187,6 +189,13 @@ function openVessel(vesselId: string): void {
           <el-col :span="8">
             <el-form-item label="总吨位 t" prop="grossTonnage">
               <el-input-number id="vessel-tonnage" v-model="form.grossTonnage" :min="1" :max="2000" :step="1" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="12">
+          <el-col :span="8">
+            <el-form-item label="吃水 m" prop="draftDepth">
+              <el-input-number id="vessel-draft" v-model="form.draftDepth" :min="0.5" :max="20" :step="0.1" :precision="1" style="width: 100%" />
             </el-form-item>
           </el-col>
         </el-row>

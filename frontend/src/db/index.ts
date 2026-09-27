@@ -3,17 +3,20 @@ import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
 import type { Berth } from '../types/berth';
+import type { CallReviewTask } from '../types/review';
 import { buildBerthRecords } from './berth';
 
 /**
  * gbfishport-db：库名固定为 gbfishport-db
- * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录。
+ * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录；
+ * v4 新增渔船吃水、流水渔港索引与进出港核验待办表。
  */
 export class FishPortDatabase extends Dexie {
   ports!: Table<FishingPort, string>;
   vessels!: Table<FishingVessel, string>;
   calls!: Table<PortCall, string>;
   berths!: Table<Berth, string>;
+  reviews!: Table<CallReviewTask, string>;
 
   constructor() {
     super('gbfishport-db');
@@ -52,6 +55,21 @@ export class FishPortDatabase extends Dexie {
             await berthTable.bulkPut(buildBerthRecords(port));
           }
         }
+      });
+
+    this.version(4)
+      .stores({
+        calls: 'id, vesselId, type, time, portId',
+        reviews: 'id, vesselId, portId, status, type, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // v4 迁移：历史渔船补默认吃水，原 calls 数据不改动，仍可在流水和档案时间线中查看。
+        await tx
+          .table<FishingVessel, string>('vessels')
+          .toCollection()
+          .modify((vessel) => {
+            if (typeof vessel.draftDepth !== 'number') vessel.draftDepth = 3.0;
+          });
       });
   }
 }

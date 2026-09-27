@@ -21,6 +21,8 @@ export interface PortCall {
   time: string;
   /** 泊位号 */
   berthNo: string;
+  /** 涉及渔港 id（历史流水可能为空） */
+  portId?: string;
   /** 加冰 kg */
   iceKg: number;
   /** 加油 L */
@@ -38,6 +40,8 @@ export interface CallDraft {
   type: CallType;
   time: string;
   berthNo: string;
+  /** 涉及渔港 id */
+  portId?: string;
   iceKg: number;
   fuelL: number;
   unloadKg: number;

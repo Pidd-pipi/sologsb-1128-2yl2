@@ -1,6 +1,7 @@
 import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
+import type { CallReviewTask } from '../types/review';
 import { toPlain } from '../utils/format';
 import { db } from './index';
 import { buildBerthRecords } from './berth';
@@ -82,6 +83,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石浦',
     length: 32.5,
     beam: 6.4,
+    draftDepth: 4.2,
     grossTonnage: 168,
     enginePower: 268,
     operationType: '拖网',
@@ -97,6 +99,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '沈家门',
     length: 28.6,
     beam: 5.8,
+    draftDepth: 3.8,
     grossTonnage: 120,
     enginePower: 202,
     operationType: '围网',
@@ -112,6 +115,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '高亭',
     length: 24.2,
     beam: 5.1,
+    draftDepth: 3.4,
     grossTonnage: 88,
     enginePower: 158,
     operationType: '刺网',
@@ -127,6 +131,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石塘',
     length: 19.8,
     beam: 4.6,
+    draftDepth: 2.8,
     grossTonnage: 56,
     enginePower: 96,
     operationType: '钓具',
@@ -142,6 +147,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石浦',
     length: 35.0,
     beam: 6.8,
+    draftDepth: 4.6,
     grossTonnage: 196,
     enginePower: 330,
     operationType: '拖网',
@@ -157,6 +163,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '沈家门',
     length: 21.5,
     beam: 4.9,
+    draftDepth: 3.1,
     grossTonnage: 72,
     enginePower: 132,
     operationType: '围网',
@@ -176,6 +183,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '进港',
     time: hoursAgo(5),
     berthNo: 'B01',
+    portId: 'p-1001',
     iceKg: 1200,
     fuelL: 800,
     unloadKg: 8600,
@@ -189,6 +197,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '进港',
     time: hoursAgo(3),
     berthNo: 'B02',
+    portId: 'p-1001',
     iceKg: 900,
     fuelL: 1200,
     unloadKg: 12400,
@@ -202,6 +211,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '进港',
     time: hoursAgo(2),
     berthNo: 'B01',
+    portId: 'p-1002',
     iceKg: 600,
     fuelL: 0,
     unloadKg: 5200,
@@ -215,6 +225,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '进港',
     time: hoursAgo(1),
     berthNo: 'B01',
+    portId: 'p-1003',
     iceKg: 300,
     fuelL: 260,
     unloadKg: 2100,
@@ -228,6 +239,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '出港',
     time: daysAgo(1),
     berthNo: 'B02',
+    portId: 'p-1004',
     iceKg: 0,
     fuelL: 420,
     unloadKg: 0,
@@ -241,6 +253,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '进港',
     time: daysAgo(1),
     berthNo: 'B02',
+    portId: 'p-1002',
     iceKg: 480,
     fuelL: 300,
     unloadKg: 3600,
@@ -254,6 +267,7 @@ export const SEED_CALLS: PortCall[] = [
     type: '出港',
     time: daysAgo(2),
     berthNo: 'B01',
+    portId: 'p-1001',
     iceKg: 0,
     fuelL: 950,
     unloadKg: 0,
@@ -267,11 +281,44 @@ export const SEED_CALLS: PortCall[] = [
     type: '出港',
     time: daysAgo(4),
     berthNo: 'B03',
+    portId: 'p-1002',
     iceKg: 200,
     fuelL: 540,
     unloadKg: 0,
     visaStatus: '待签证',
     createdAt: daysAgo(4),
+  },
+];
+
+/** 初始核验待办：休渔结束前后证书过期的进港申请先被拦下 */
+export const SEED_REVIEWS: CallReviewTask[] = [
+  {
+    id: 'r-4001',
+    vesselId: 'v-2003',
+    vesselName: '浙岱渔07156',
+    vesselNo: 'ZDY07156',
+    portId: 'p-1004',
+    portName: '温岭石塘渔港',
+    berthNo: 'B01',
+    type: '进港',
+    draftDepth: 3.4,
+    berthDepth: 3.9,
+    certificateExpiry: '2026-02-28',
+    draft: {
+      vesselId: 'v-2003',
+      type: '进港',
+      time: hoursAgo(0.5),
+      berthNo: 'B01',
+      portId: 'p-1004',
+      iceKg: 200,
+      fuelL: 180,
+      unloadKg: 1600,
+      visaStatus: '待签证',
+    },
+    issues: [{ code: 'certificate_expired', message: '在温岭石塘渔港核验：渔船证书已于 2026-02-28 过期' }],
+    reasons: ['在温岭石塘渔港核验：渔船证书已于 2026-02-28 过期'],
+    status: '待处理',
+    createdAt: hoursAgo(0.5),
   },
 ];
 
@@ -285,6 +332,7 @@ export async function ensureSeedData(): Promise<void> {
     await db.ports.bulkPut(toPlain(SEED_PORTS));
     await db.vessels.bulkPut(toPlain(SEED_VESSELS));
     await db.calls.bulkPut(toPlain(SEED_CALLS));
+    await db.reviews.bulkPut(toPlain(SEED_REVIEWS));
   }
   const ports = await db.ports.toArray();
   for (const port of ports) {

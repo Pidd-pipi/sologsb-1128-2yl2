@@ -5,6 +5,9 @@ import { toPlain, uid } from '../utils/format';
 import { emptyPortFilter, type FishingPort, type PortFilter, type SupplyCapability } from '../types/port';
 import type { Berth, BerthStatus } from '../types/berth';
 import type { CallDraft, PortCall } from '../types/call';
+import type { FishingVessel } from '../types/vessel';
+import type { CallReviewTask } from '../types/review';
+import { validateCallRegistration } from '../utils/callValidation';
 import { buildBerthRecords } from '../db/berth';
 
 export interface PortInput {
@@ -20,10 +23,15 @@ export interface PortInput {
   manager: string;
 }
 
+export type CallSubmissionResult =
+  | { outcome: 'registered'; call: PortCall }
+  | { outcome: 'review'; review: CallReviewTask };
+
 export const usePortStore = defineStore('port', () => {
   const ports = ref<FishingPort[]>([]);
   const berths = ref<Berth[]>([]);
   const calls = ref<PortCall[]>([]);
+  const reviews = ref<CallReviewTask[]>([]);
   const loading = ref(false);
   const filter = ref<PortFilter>(emptyPortFilter());
 
@@ -41,6 +49,12 @@ export const usePortStore = defineStore('port', () => {
   const callsSorted = computed(() =>
     [...calls.value].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()),
   );
+
+  const reviewsSorted = computed(() =>
+    [...reviews.value].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+  );
+  const pendingReviews = computed(() => reviewsSorted.value.filter((item) => item.status === '待处理'));
+  const pendingReviewCount = computed(() => pendingReviews.value.length);
 
   function portById(id: string): FishingPort | undefined {
     return ports.value.find((p) => p.id === id);
@@ -61,10 +75,16 @@ export const usePortStore = defineStore('port', () => {
   async function loadAll(): Promise<void> {
     loading.value = true;
     try {
-      const [p, b, c] = await Promise.all([db.ports.toArray(), db.berths.toArray(), db.calls.toArray()]);
+      const [p, b, c, r] = await Promise.all([
+        db.ports.toArray(),
+        db.berths.toArray(),
+        db.calls.toArray(),
+        db.reviews.toArray(),
+      ]);
       ports.value = p;
       berths.value = b;
       calls.value = c;
+      reviews.value = r;
     } finally {
       loading.value = false;
     }
@@ -141,17 +161,40 @@ export const usePortStore = defineStore('port', () => {
     ports.value = ports.value.map((p) => (p.id === portId ? next : p));
   }
 
-  /**
-   * 登记一条进出港记录，并同步泊位占用状态（进港 → 占用，出港 → 释放）。
-   */
-  async function registerCall(draft: CallDraft, vesselName: string, portId: string): Promise<PortCall> {
+  function applyCallToBerth(draft: CallDraft, portId: string, vessel: FishingVessel, call: PortCall): Berth | null {
+    const berth = berths.value.find((b) => b.portId === portId && b.berthNo === draft.berthNo);
+    if (!berth) return null;
+    const next: Berth =
+      draft.type === '进港'
+        ? {
+            ...berth,
+            status: '占用',
+            vesselId: vessel.id,
+            vesselName: vessel.name,
+            berthAt: call.time,
+            leaveAt: null,
+          }
+        : {
+            ...berth,
+            status: '空闲',
+            vesselId: null,
+            vesselName: null,
+            berthAt: null,
+            leaveAt: call.time,
+          };
+    berths.value = berths.value.map((b) => (b.id === berth.id ? next : b));
+    return next;
+  }
+
+  async function writeCallAndSyncBerth(draft: CallDraft, portId: string, vessel: FishingVessel): Promise<PortCall> {
     const call: PortCall = {
       id: uid('c'),
-      vesselId: draft.vesselId,
-      vesselName,
+      vesselId: vessel.id,
+      vesselName: vessel.name,
       type: draft.type,
       time: draft.time ? new Date(draft.time).toISOString() : new Date().toISOString(),
       berthNo: draft.berthNo,
+      portId,
       iceKg: Number(draft.iceKg) || 0,
       fuelL: Number(draft.fuelL) || 0,
       unloadKg: Number(draft.unloadKg) || 0,
@@ -161,40 +204,127 @@ export const usePortStore = defineStore('port', () => {
     await db.calls.put(toPlain(call));
     calls.value = [...calls.value, call];
 
-    const berth = berths.value.find((b) => b.portId === portId && b.berthNo === draft.berthNo);
-    if (berth) {
-      const next: Berth =
-        draft.type === '进港'
-          ? {
-              ...berth,
-              status: '占用',
-              vesselId: draft.vesselId,
-              vesselName,
-              berthAt: call.time,
-              leaveAt: null,
-            }
-          : {
-              ...berth,
-              status: '空闲',
-              vesselId: null,
-              vesselName: null,
-              berthAt: null,
-              leaveAt: call.time,
-            };
-      await db.berths.put(toPlain(next));
-      berths.value = berths.value.map((b) => (b.id === berth.id ? next : b));
-    }
+    const nextBerth = applyCallToBerth(draft, portId, vessel, call);
+    if (nextBerth) await db.berths.put(toPlain(nextBerth));
     return call;
+  }
+
+  /**
+   * 提交进出港登记：先核验证书、吃水、重号船与泊位条件。
+   * 核验不通过时只写待办，不产生正常流水、不改变泊位；待处理人确认放行后才落流水。
+   */
+  async function submitCallRegistration(draft: CallDraft, vessel: FishingVessel, allVessels: FishingVessel[]): Promise<CallSubmissionResult> {
+    const portId = draft.portId ?? '';
+    const port = portById(portId);
+    if (!port) throw new Error('请选择有效的渔港泊位');
+    const normalizedDraft: CallDraft = { ...draft, portId, berthNo: draft.berthNo.trim().toUpperCase() };
+    const berth = berths.value.find((b) => b.portId === portId && b.berthNo === normalizedDraft.berthNo);
+    const result = validateCallRegistration({
+      draft: normalizedDraft,
+      vessel,
+      vessels: allVessels,
+      port,
+      berth,
+    });
+
+    if (result.issues.length > 0) {
+      const review: CallReviewTask = {
+        id: uid('r'),
+        vesselId: vessel.id,
+        vesselName: vessel.name,
+        vesselNo: vessel.vesselNo,
+        portId: port.id,
+        portName: port.name,
+        berthNo: normalizedDraft.berthNo,
+        type: normalizedDraft.type,
+        draftDepth: Number(vessel.draftDepth),
+        berthDepth: berth ? Number(berth.designDepth) : null,
+        certificateExpiry: vessel.certificateExpiry,
+        draft: toPlain(normalizedDraft),
+        issues: toPlain(result.issues),
+        reasons: result.issues.map((issue) => issue.message),
+        status: '待处理',
+        createdAt: new Date().toISOString(),
+      };
+      await db.reviews.put(toPlain(review));
+      reviews.value = [...reviews.value, review];
+      return { outcome: 'review', review };
+    }
+
+    const call = await writeCallAndSyncBerth(normalizedDraft, portId, vessel);
+    return { outcome: 'registered', call };
+  }
+
+  /** 处理人确认放行；若档案或泊位已修正，会按最新数据重新核验。 */
+  async function approveReview(
+    reviewId: string,
+    reviewedBy: string,
+    allVessels: FishingVessel[],
+    reviewNote = '',
+  ): Promise<PortCall> {
+    const task = reviews.value.find((item) => item.id === reviewId);
+    if (!task) throw new Error('待办不存在或已被处理');
+    if (task.status !== '待处理') throw new Error('该待办已处理');
+
+    const vessel = allVessels.find((item) => item.id === task.vesselId);
+    if (!vessel) throw new Error('渔船档案不存在，无法放行');
+    const port = portById(task.portId);
+    if (!port) throw new Error('涉及渔港不存在，无法放行');
+    const berth = berths.value.find((b) => b.portId === task.portId && b.berthNo === task.draft.berthNo);
+    const result = validateCallRegistration({
+      draft: task.draft,
+      vessel,
+      vessels: allVessels,
+      port,
+      berth,
+    });
+    const blockingIssues = result.issues.filter((issue) => issue.code === 'berth_unavailable');
+    if (blockingIssues.length > 0) {
+      throw new Error(`泊位条件仍不满足：${blockingIssues.map((issue) => issue.message).join('；')}`);
+    }
+
+    const call = await writeCallAndSyncBerth({ ...task.draft, portId: task.portId }, task.portId, vessel);
+    const reviewedAt = new Date().toISOString();
+    const next: CallReviewTask = {
+      ...task,
+      status: '已放行',
+      reviewedAt,
+      reviewedBy: reviewedBy.trim(),
+      reviewNote: reviewNote.trim() || undefined,
+      resolvedCallId: call.id,
+    };
+    await db.reviews.put(toPlain(next));
+    reviews.value = reviews.value.map((item) => (item.id === task.id ? next : item));
+    return call;
+  }
+
+  async function rejectReview(reviewId: string, reviewedBy: string, note: string): Promise<void> {
+    const task = reviews.value.find((item) => item.id === reviewId);
+    if (!task) throw new Error('待办不存在或已被处理');
+    if (task.status !== '待处理') throw new Error('该待办已处理');
+    const next: CallReviewTask = {
+      ...task,
+      status: '已驳回',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: reviewedBy.trim(),
+      reviewNote: note.trim(),
+    };
+    await db.reviews.put(toPlain(next));
+    reviews.value = reviews.value.map((item) => (item.id === task.id ? next : item));
   }
 
   return {
     ports,
     berths,
     calls,
+    reviews,
     loading,
     filter,
     filteredPorts,
     callsSorted,
+    reviewsSorted,
+    pendingReviews,
+    pendingReviewCount,
     portById,
     berthsOf,
     callsOfVessel,
@@ -204,6 +334,8 @@ export const usePortStore = defineStore('port', () => {
     addBerth,
     setBerthStatus,
     updatePort,
-    registerCall,
+    submitCallRegistration,
+    approveReview,
+    rejectReview,
   };
 });
