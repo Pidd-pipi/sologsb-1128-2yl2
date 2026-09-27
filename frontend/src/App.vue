@@ -2,20 +2,25 @@
 import { computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { Location, MapLocation, Tickets, Van } from '@element-plus/icons-vue';
+import { Location, MapLocation, Tickets, Van, WarningFilled } from '@element-plus/icons-vue';
 import { useUiStore } from './stores/uiStore';
+import { usePortStore } from './stores/portStore';
 
 const route = useRoute();
 const uiStore = useUiStore();
+const portStore = usePortStore();
 
 const activePath = computed(() => {
   const path = route.path;
   if (path === '/' || path.startsWith('/ports')) return '/';
   if (path.startsWith('/vessels')) return '/vessels';
+  if (path.startsWith('/reviews')) return '/reviews';
   if (path.startsWith('/calls')) return '/calls';
   if (path.startsWith('/map')) return '/map';
   return path;
 });
+
+void portStore.loadAll();
 
 watch(
   () => uiStore.notices.length,
@@ -49,6 +54,12 @@ watch(
         <el-menu-item index="/calls">
           <el-icon><Tickets /></el-icon>
           进出港登记
+        </el-menu-item>
+        <el-menu-item index="/reviews">
+          <el-icon><WarningFilled /></el-icon>
+          <el-badge :value="portStore.pendingReviewCount" :hidden="portStore.pendingReviewCount === 0" type="warning">
+            核验待办
+          </el-badge>
         </el-menu-item>
         <el-menu-item index="/map">
           <el-icon><MapLocation /></el-icon>

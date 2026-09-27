@@ -32,6 +32,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '进出港登记' },
   },
   {
+    path: '/reviews',
+    name: 'review-board',
+    component: () => import('../pages/ReviewBoard.vue'),
+    meta: { title: '核验待办' },
+  },
+  {
     path: '/map',
     name: 'map-view',
     component: () => import('../pages/MapView.vue'),

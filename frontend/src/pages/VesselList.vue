@@ -22,6 +22,7 @@ function emptyForm(): VesselInput {
     homePort: '',
     length: 24,
     beam: 5,
+    draft: 2.5,
     grossTonnage: 80,
     enginePower: 160,
     operationType: '拖网',
@@ -47,6 +48,7 @@ const rules: FormRules = {
   ],
   homePort: [{ required: true, message: '请输入船籍港', trigger: 'blur' }],
   owner: [{ required: true, message: '请输入船主', trigger: 'blur' }],
+  draft: [{ required: true, message: '请登记吃水深度', trigger: 'blur' }],
   certificateExpiry: [{ required: true, message: '请选择证书有效期', trigger: 'change' }],
 };
 
@@ -69,7 +71,12 @@ async function submit(): Promise<void> {
   try {
     const vessel = await vesselStore.createVessel(form);
     dialogVisible.value = false;
-    ElMessage.success(`已建档渔船：${vessel.name}`);
+    const duplicate = vesselStore.duplicateOf(vessel.vesselNo, vessel.id);
+    if (duplicate) {
+      ElMessage.warning(`已建档：${vessel.name}。注意编号 ${vessel.vesselNo} 与「${duplicate.name}」重复，登记进出港时将转入待办核验`);
+    } else {
+      ElMessage.success(`已建档渔船：${vessel.name}`);
+    }
   } catch (error) {
     ElMessage.error(`建档失败：${(error as Error).message}`);
   } finally {
@@ -185,25 +192,30 @@ function openVessel(vesselId: string): void {
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="总吨位 t" prop="grossTonnage">
-              <el-input-number id="vessel-tonnage" v-model="form.grossTonnage" :min="1" :max="2000" :step="1" style="width: 100%" />
+            <el-form-item label="吃水 m" prop="draft">
+              <el-input-number id="vessel-draft" v-model="form.draft" :min="0.3" :max="20" :step="0.1" :precision="1" style="width: 100%" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="12">
-          <el-col :span="8">
+          <el-col :span="6">
+            <el-form-item label="总吨位 t" prop="grossTonnage">
+              <el-input-number id="vessel-tonnage" v-model="form.grossTonnage" :min="1" :max="2000" :step="1" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="6">
             <el-form-item label="主机功率 kW" prop="enginePower">
               <el-input-number id="vessel-power" v-model="form.enginePower" :min="10" :max="3000" :step="1" style="width: 100%" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
             <el-form-item label="作业类型" prop="operationType">
               <el-select id="vessel-op-type" v-model="form.operationType" style="width: 100%">
                 <el-option v-for="type in OPERATION_TYPES" :key="type" :label="type" :value="type" />
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
             <el-form-item label="船体材质" prop="hullMaterial">
               <el-select id="vessel-material" v-model="form.hullMaterial" style="width: 100%">
                 <el-option v-for="m in HULL_MATERIALS" :key="m" :label="m" :value="m" />

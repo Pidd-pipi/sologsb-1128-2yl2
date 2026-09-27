@@ -10,6 +10,7 @@ import BerthGrid from '../components/common/BerthGrid.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import type { Berth } from '../types/berth';
 import { CALL_TYPES, VISA_STATUSES, emptyCallDraft, type CallDraft, type CallType } from '../types/call';
+import { issueTagType, verifyCall } from '../utils/verify';
 import { formatDateTime, formatNumber, isToday, nowLocalInputValue, toPlain } from '../utils/format';
 
 interface CallForm extends CallDraft {
@@ -67,6 +68,24 @@ const berthKey = computed({
 const focusBerths = computed<Berth[]>(() =>
   focusPortId.value ? portStore.berthsOf(focusPortId.value) : [],
 );
+
+/** 当前选中的泊位与渔港（核验预检用） */
+const selectedBerth = computed(() =>
+  portStore.berths.find((b) => b.portId === form.value.portId && b.berthNo === form.value.berthNo),
+);
+const selectedPort = computed(() => portStore.portById(form.value.portId));
+
+/** 实时核验预检：与提交时同一套 verifyCall，提前暴露将转入待办的问题 */
+const previewIssues = computed(() => {
+  if (!selectedVessel.value || !form.value.berthNo) return [];
+  return verifyCall({
+    vessel: selectedVessel.value,
+    berth: selectedBerth.value,
+    port: selectedPort.value,
+    type: form.value.type,
+    vessels: vesselStore.vessels,
+  });
+});
 
 const berthRef = computed(() => portStore.berths);
 const { summary } = useBerthStatus(berthRef, computed(() => focusPortId.value));
@@ -148,8 +167,13 @@ async function submit(): Promise<void> {
       unloadKg: Number(form.value.unloadKg) || 0,
       visaStatus: form.value.visaStatus,
     };
-    const call = await portStore.registerCall(payload, selectedVessel.value.name, form.value.portId);
-    ElMessage.success(`已登记 ${call.vesselName} ${call.type} · 泊位 ${call.berthNo}`);
+    const result = await portStore.submitCall(payload, selectedVessel.value, form.value.portId);
+    if (result.kind === 'ok') {
+      ElMessage.success(`核验通过，已登记 ${result.call.vesselName} ${result.call.type} · 泊位 ${result.call.berthNo}`);
+    } else {
+      const codes = result.task.issues.map((i) => i.code).join('、');
+      ElMessage.warning(`核验未通过（${codes}），已转入核验待办 · 涉及渔港：${result.task.portName}，处理人确认放行后才会写入流水`);
+    }
     clearDraft();
     Object.assign(form.value, {
       ...emptyCallDraft(),
@@ -175,9 +199,12 @@ function openVessel(vesselId: string): void {
       <div>
         <h1>进出港登记</h1>
         <p class="page__sub">
-          选择渔船与进出港类型，填写泊位号、加冰量、加油量与卸货量，提交后自动同步泊位占用状态
+          选择渔船与进出港类型，填写泊位号、加冰量、加油量与卸货量；提交时自动核验证书、吃水与泊位条件，未通过的转入待办
         </p>
       </div>
+      <el-badge :value="portStore.pendingReviewCount" :hidden="portStore.pendingReviewCount === 0" type="warning">
+        <el-button data-testid="goto-reviews" @click="router.push('/reviews')">核验待办</el-button>
+      </el-badge>
     </header>
 
     <el-alert
@@ -263,6 +290,19 @@ function openVessel(vesselId: string): void {
               </el-select>
             </el-form-item>
 
+            <el-form-item v-if="previewIssues.length" label="核验预检">
+              <div class="issue-list" data-testid="preview-issues">
+                <div v-for="issue in previewIssues" :key="issue.code + issue.detail" class="issue-item">
+                  <el-tag size="small" :type="issueTagType(issue.code)" effect="dark">{{ issue.code }}</el-tag>
+                  <span>{{ issue.detail }}</span>
+                </div>
+                <p class="issue-hint">提交后将转入「核验待办」，处理人确认放行才会写入流水</p>
+              </div>
+            </el-form-item>
+            <el-form-item v-else-if="selectedVessel && form.berthNo" label="核验预检">
+              <el-tag type="success" size="small" data-testid="preview-pass">证书、吃水与泊位条件核验通过</el-tag>
+            </el-form-item>
+
             <el-form-item>
               <el-button type="primary" :loading="submitting" data-testid="submit-call" @click="submit">保存登记</el-button>
               <el-button data-testid="clear-draft" @click="clearDraft(); ElMessage.success('草稿已清空')">清空草稿</el-button>
@@ -333,6 +373,13 @@ function openVessel(vesselId: string): void {
   flex-direction: column;
   gap: 16px;
 }
+.page__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .page__head h1 {
   margin: 0;
   font-size: 22px;
@@ -342,6 +389,24 @@ function openVessel(vesselId: string): void {
   margin: 6px 0 0;
   font-size: 13px;
   color: #6b7c8c;
+}
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.issue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4b5c6d;
+}
+.issue-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #b88230;
 }
 .detail-card {
   border-radius: 10px;

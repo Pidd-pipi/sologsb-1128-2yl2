@@ -1,7 +1,9 @@
 import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
+import type { ReviewTask } from '../types/review';
 import { toPlain } from '../utils/format';
+import { verifyCall } from '../utils/verify';
 import { db } from './index';
 import { buildBerthRecords } from './berth';
 
@@ -82,6 +84,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石浦',
     length: 32.5,
     beam: 6.4,
+    draft: 3.2,
     grossTonnage: 168,
     enginePower: 268,
     operationType: '拖网',
@@ -97,6 +100,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '沈家门',
     length: 28.6,
     beam: 5.8,
+    draft: 2.8,
     grossTonnage: 120,
     enginePower: 202,
     operationType: '围网',
@@ -112,6 +116,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '高亭',
     length: 24.2,
     beam: 5.1,
+    draft: 2.4,
     grossTonnage: 88,
     enginePower: 158,
     operationType: '刺网',
@@ -127,6 +132,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石塘',
     length: 19.8,
     beam: 4.6,
+    draft: 1.8,
     grossTonnage: 56,
     enginePower: 96,
     operationType: '钓具',
@@ -142,6 +148,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '石浦',
     length: 35.0,
     beam: 6.8,
+    draft: 4.2,
     grossTonnage: 196,
     enginePower: 330,
     operationType: '拖网',
@@ -157,6 +164,7 @@ export const SEED_VESSELS: FishingVessel[] = [
     homePort: '沈家门',
     length: 21.5,
     beam: 4.9,
+    draft: 2.1,
     grossTonnage: 72,
     enginePower: 132,
     operationType: '围网',
@@ -164,6 +172,23 @@ export const SEED_VESSELS: FishingVessel[] = [
     owner: '刘建军',
     certificateExpiry: '2026-08-05',
     createdAt: daysAgo(90),
+  },
+  {
+    // 与 v-2001 编号重复（重号船），用于演示进出港核验的「编号重复」待办
+    id: 'v-2007',
+    name: '浙象渔05123（副）',
+    vesselNo: 'ZXY05123',
+    homePort: '石浦',
+    length: 26.4,
+    beam: 5.6,
+    draft: 2.6,
+    grossTonnage: 102,
+    enginePower: 176,
+    operationType: '刺网',
+    hullMaterial: '钢质',
+    owner: '林海平',
+    certificateExpiry: '2027-09-30',
+    createdAt: daysAgo(60),
   },
 ];
 
@@ -276,6 +301,122 @@ export const SEED_CALLS: PortCall[] = [
 ];
 
 /**
+ * 演示用核验待办：原因直接复用 verifyCall 生成，与提交登记时的核验口径一致。
+ * 覆盖三类典型问题：证书过期、吃水超过泊位水深、编号重复。
+ */
+export function buildSeedReviews(): ReviewTask[] {
+  const specs: Array<{
+    id: string;
+    vesselId: string;
+    portId: string;
+    berthNo: string;
+    time: string;
+    status: ReviewTask['status'];
+    handler: string;
+    handledAt: string | null;
+    note: string;
+    iceKg: number;
+    fuelL: number;
+    unloadKg: number;
+  }> = [
+    {
+      // 证书过期：浙岱渔07156 证书 2026-02-28 已过期
+      id: 'r-4001',
+      vesselId: 'v-2003',
+      portId: 'p-1003',
+      berthNo: 'B02',
+      time: hoursAgo(6),
+      status: '待处理',
+      handler: '',
+      handledAt: null,
+      note: '',
+      iceKg: 500,
+      fuelL: 200,
+      unloadKg: 3200,
+    },
+    {
+      // 吃水超限：浙象渔05288 吃水 4.2m，石塘 B03 设计水深 3.9m
+      id: 'r-4002',
+      vesselId: 'v-2005',
+      portId: 'p-1004',
+      berthNo: 'B03',
+      time: hoursAgo(4),
+      status: '待处理',
+      handler: '',
+      handledAt: null,
+      note: '',
+      iceKg: 800,
+      fuelL: 600,
+      unloadKg: 9800,
+    },
+    {
+      // 编号重复：浙象渔05123（副）与浙象渔05123 同号
+      id: 'r-4003',
+      vesselId: 'v-2007',
+      portId: 'p-1001',
+      berthNo: 'B03',
+      time: hoursAgo(2),
+      status: '待处理',
+      handler: '',
+      handledAt: null,
+      note: '',
+      iceKg: 400,
+      fuelL: 150,
+      unloadKg: 2600,
+    },
+    {
+      // 已驳回示例：浙普渔13566 证书过期，被拦下留痕
+      id: 'r-4004',
+      vesselId: 'v-2006',
+      portId: 'p-1002',
+      berthNo: 'B04',
+      time: daysAgo(1),
+      status: '已驳回',
+      handler: '陈港生',
+      handledAt: hoursAgo(20),
+      note: '证书已过期，通知船东换证后重新申报',
+      iceKg: 300,
+      fuelL: 0,
+      unloadKg: 1800,
+    },
+  ];
+
+  return specs.map((spec) => {
+    const vessel = SEED_VESSELS.find((v) => v.id === spec.vesselId) as FishingVessel;
+    const port = SEED_PORTS.find((p) => p.id === spec.portId) as FishingPort;
+    const berth = buildBerthRecords(port).find((b) => b.berthNo === spec.berthNo);
+    const issues = verifyCall({ vessel, berth, port, type: '进港', vessels: SEED_VESSELS });
+    return {
+      id: spec.id,
+      vesselId: vessel.id,
+      vesselName: vessel.name,
+      vesselNo: vessel.vesselNo,
+      portId: port.id,
+      portName: port.name,
+      berthNo: spec.berthNo,
+      type: '进港',
+      time: spec.time,
+      issues,
+      payload: {
+        vesselId: vessel.id,
+        type: '进港',
+        time: spec.time,
+        berthNo: spec.berthNo,
+        iceKg: spec.iceKg,
+        fuelL: spec.fuelL,
+        unloadKg: spec.unloadKg,
+        visaStatus: '待签证',
+      },
+      status: spec.status,
+      handler: spec.handler,
+      handledAt: spec.handledAt,
+      note: spec.note,
+      createdAt: spec.time,
+    };
+  });
+}
+
+/**
  * 首次进入时写入演示数据，并为缺少泊位记录的渔港补齐泊位。
  * 写库前统一 toPlain 脱代理，避免 DataCloneError。
  */
@@ -285,6 +426,7 @@ export async function ensureSeedData(): Promise<void> {
     await db.ports.bulkPut(toPlain(SEED_PORTS));
     await db.vessels.bulkPut(toPlain(SEED_VESSELS));
     await db.calls.bulkPut(toPlain(SEED_CALLS));
+    await db.reviews.bulkPut(toPlain(buildSeedReviews()));
   }
   const ports = await db.ports.toArray();
   for (const port of ports) {

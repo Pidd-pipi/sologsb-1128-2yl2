@@ -3,17 +3,21 @@ import type { FishingPort } from '../types/port';
 import type { FishingVessel } from '../types/vessel';
 import type { PortCall } from '../types/call';
 import type { Berth } from '../types/berth';
+import type { ReviewTask } from '../types/review';
 import { buildBerthRecords } from './berth';
+import { DEFAULT_DRAFT } from '../utils/verify';
 
 /**
  * gbfishport-db：库名固定为 gbfishport-db
- * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录。
+ * v1 建 ports / vessels；v2 新增 calls 表与 vesselId 索引；v3 新增 berths 表并按泊位数生成初始记录；
+ * v4 新增 reviews 表（进出港核验待办），并为老渔船档案回填默认吃水。
  */
 export class FishPortDatabase extends Dexie {
   ports!: Table<FishingPort, string>;
   vessels!: Table<FishingVessel, string>;
   calls!: Table<PortCall, string>;
   berths!: Table<Berth, string>;
+  reviews!: Table<ReviewTask, string>;
 
   constructor() {
     super('gbfishport-db');
@@ -52,6 +56,22 @@ export class FishPortDatabase extends Dexie {
             await berthTable.bulkPut(buildBerthRecords(port));
           }
         }
+      });
+
+    this.version(4)
+      .stores({
+        reviews: 'id, vesselId, portId, status, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // v4 迁移：新增 reviews 表；老渔船档案没有吃水字段，回填默认吃水，原有记录保持不变
+        await tx
+          .table<FishingVessel, string>('vessels')
+          .toCollection()
+          .modify((vessel) => {
+            if (typeof vessel.draft !== 'number' || !Number.isFinite(vessel.draft) || vessel.draft <= 0) {
+              vessel.draft = DEFAULT_DRAFT;
+            }
+          });
       });
   }
 }

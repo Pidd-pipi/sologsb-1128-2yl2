@@ -91,6 +91,9 @@ watch(vesselId, bootstrap);
           <el-card shadow="never" class="detail-card">
             <template #header><span class="card-title">档案要点</span></template>
             <el-descriptions :column="1" size="small" border>
+              <el-descriptions-item label="吃水">
+                {{ formatNumber(vessel.draft) }} m
+              </el-descriptions-item>
               <el-descriptions-item label="总吨位">
                 {{ formatNumber(vessel.grossTonnage) }} t（{{ tonnageTier(vessel.grossTonnage) }}）
               </el-descriptions-item>

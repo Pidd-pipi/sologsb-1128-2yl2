@@ -10,6 +10,7 @@ export interface VesselInput {
   homePort: string;
   length: number;
   beam: number;
+  draft: number;
   grossTonnage: number;
   enginePower: number;
   operationType: FishingVessel['operationType'];
@@ -48,6 +49,13 @@ export const useVesselStore = defineStore('vessel', () => {
     return vessels.value.find((v) => v.name === name);
   }
 
+  /** 重号核对：是否存在其他档案使用同一渔船编号 */
+  function duplicateOf(vesselNo: string, excludeId = ''): FishingVessel | undefined {
+    const no = vesselNo.trim().toUpperCase();
+    if (!no) return undefined;
+    return vessels.value.find((v) => v.vesselNo === no && v.id !== excludeId);
+  }
+
   function resetQuery(): void {
     query.value = emptyVesselQuery();
   }
@@ -69,6 +77,7 @@ export const useVesselStore = defineStore('vessel', () => {
       homePort: input.homePort.trim(),
       length: Number(input.length),
       beam: Number(input.beam),
+      draft: Number(input.draft),
       grossTonnage: Number(input.grossTonnage),
       enginePower: Number(input.enginePower),
       operationType: input.operationType,
@@ -99,6 +108,7 @@ export const useVesselStore = defineStore('vessel', () => {
     homePorts,
     vesselById,
     vesselByName,
+    duplicateOf,
     resetQuery,
     loadAll,
     createVessel,
